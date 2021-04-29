@@ -5,6 +5,7 @@ import {
   CollectionReference,
   Transaction,
 } from '@google-cloud/firestore';
+import { serializeKey } from './Decorators/Serialize';
 import { ValidationError } from './Errors/ValidationError';
 
 import {
@@ -111,6 +112,41 @@ export abstract class AbstractFirestoreRepository<T extends IEntity> extends Bas
     });
   };
 
+  protected initializeSerializedObjects(entity: T) {
+    Object.keys(entity).forEach(propertyKey => {
+      if (Reflect.getMetadata(serializeKey, entity, propertyKey) !== undefined) {
+        // const constructor = Reflect.getMetadata('design:type', entity, propertyKey);
+        const constructor = Reflect.getMetadata(serializeKey, entity, propertyKey);
+        const data = (entity as unknown) as { [k: string]: unknown };
+        const subData = data[propertyKey] as { [k: string]: unknown };
+
+        if (Array.isArray(subData)) {
+          ((entity as unknown) as { [key: string]: unknown })[propertyKey] = subData.map(value => {
+            const subEntity = new constructor();
+
+            for (const i in value) {
+              subEntity[i] = value[i];
+            }
+
+            this.initializeSerializedObjects(subEntity);
+
+            return subEntity;
+          });
+        } else {
+          const subEntity = new constructor();
+
+          for (const i in subData) {
+            subEntity[i] = subData[i];
+          }
+
+          this.initializeSerializedObjects(subEntity);
+
+          ((entity as unknown) as { [key: string]: unknown })[propertyKey] = subEntity;
+        }
+      }
+    });
+  }
+
   protected extractTFromDocSnap = (
     doc: DocumentSnapshot,
     tran?: Transaction,
@@ -122,6 +158,7 @@ export abstract class AbstractFirestoreRepository<T extends IEntity> extends Bas
     }) as T;
 
     this.initializeSubCollections(entity, tran, tranRefStorage);
+    this.initializeSerializedObjects(entity);
 
     return entity;
   };
